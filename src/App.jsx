@@ -2,6 +2,47 @@ import { useState, useCallback } from "react";
 
 const KEEPA_KEY = "e13gv36pj9pijq8d84h045n5rv4r2d0rekm8lsjumnbl09ham7n3h6vionpc5efc";
 
+const DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1503406445725483160/AjIRSxPqr1Cr3iHhxO-3WytpTqo-4T-9ZjBXcKHIBo6Nda6TuVyukJIf8n9_OKtzv-zV";
+
+async function sendDiscordAlert(product) {
+  if (product.grade !== "A+" && product.grade !== "A") return;
+  if (product.roi < 40) return;
+  if (product.amazonPresence > 30) return;
+
+  const emoji = product.grade === "A+" ? "🟢" : "🔵";
+  const message = {
+    username: "OA Intelligence Bot",
+    embeds: [{
+      title: emoji + " " + product.grade + " LEAD — " + product.title,
+      color: product.grade === "A+" ? 0x00ff88 : 0x4ade80,
+      fields: [
+        { name: "ROI", value: product.roi + "%", inline: true },
+        { name: "Profit", value: "$" + product.profit.toFixed(2), inline: true },
+        { name: "Score", value: product.score + "/100", inline: true },
+        { name: "Sellers", value: String(product.sellerCount), inline: true },
+        { name: "BB Stability", value: product.buyBoxStability + "%", inline: true },
+        { name: "Amazon %", value: product.amazonPresence + "%", inline: true },
+        { name: "Retailer", value: product.retailer, inline: true },
+        { name: "Source", value: product.source, inline: true },
+        { name: "Cost", value: "$" + product.cost, inline: true },
+      ],
+      description: "[View on Amazon](https://www.amazon.com/dp/" + product.asin + ") | [Keepa](https://keepa.com/#!product/1-" + product.asin + ")",
+      footer: { text: "OA Intelligence Dashboard" },
+      timestamp: new Date().toISOString(),
+    }]
+  };
+
+  try {
+    await fetch(DISCORD_WEBHOOK, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(message),
+    });
+  } catch (e) {
+    console.error("Discord alert failed:", e);
+  }
+}
+
 const GRADE_CONFIG = {
   "A+": { color: "#00ff88", bg: "rgba(0,255,136,0.12)", label: "ELITE" },
   "A":  { color: "#4ade80", bg: "rgba(74,222,128,0.1)",  label: "STRONG" },
@@ -372,16 +413,19 @@ export default function OADashboard() {
       });
     });
     showToast("Keepa data loaded!", "#6366f1");
+    setProducts(function(ps) { var updated = ps.find(function(p) { return p.id === id; }); if (updated) sendDiscordAlert(updated); return ps; });
   }, []);
 
   function handleAdd(product) {
     setProducts(function(ps) { return [product].concat(ps); });
     showToast("Added: " + product.title.slice(0, 25) + "...", "#00ff88");
+    sendDiscordAlert(product);
   }
 
   function handleImport(products) {
     setProducts(function(ps) { return products.concat(ps); });
     showToast("Imported " + products.length + " SellerAmp products!", "#10b981");
+    products.forEach(function(p) { sendDiscordAlert(p); });
   }
 
   const filtered = products
