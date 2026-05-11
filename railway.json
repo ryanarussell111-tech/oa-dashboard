@@ -1,0 +1,1 @@
+{ "scripts": { "build": "react-scripts build", "start": "serve -s build" } }
