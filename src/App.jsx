@@ -232,6 +232,99 @@ function ProductCard({ product, onAction, onLookup }) {
   );
 }
 
+function TAImport({ onImport }) {
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState("");
+
+  function handleFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setLoading(true);
+    setResult("");
+    const reader = new FileReader();
+    reader.onload = function(ev) {
+      const text = ev.target.result;
+      const lines = text.trim().split("\n");
+      if (lines.length < 2) { setResult("No data found."); setLoading(false); return; }
+
+      // Parse header
+      const headers = lines[0].split(",").map(function(h) { return h.replace(/^"|"$/g, "").trim(); });
+      function col(row, name) {
+        const idx = headers.indexOf(name);
+        if (idx < 0) return "";
+        return (row[idx] || "").replace(/^"|"$/g, "").trim();
+      }
+
+      const products = [];
+      lines.slice(1).forEach(function(line, idx) {
+        // Parse CSV with quoted fields
+        const row = [];
+        let cur = "", inQ = false;
+        for (let i = 0; i < line.length; i++) {
+          const ch = line[i];
+          if (ch === '"') { inQ = !inQ; }
+          else if (ch === "," && !inQ) { row.push(cur); cur = ""; }
+          else { cur += ch; }
+        }
+        row.push(cur);
+
+        const title = col(row, "Buy: Title");
+        const asin = col(row, "Sell: Product ID");
+        const retailer = col(row, "Buy: From").replace(".com", "");
+        const costRaw = col(row, "Buy: Price").replace(/[$,]/g, "");
+        const cost = parseFloat(costRaw) || 0;
+        const sellPriceRaw = col(row, "Sell: Price").replace(/[$,]/g, "");
+        const sellPrice = parseFloat(sellPriceRaw) || 0;
+        const profitRaw = col(row, "Gross Profit").replace(/[$,]/g, "");
+        const profit = parseFloat(profitRaw) || 0;
+        const roiRaw = col(row, "Gross ROI").replace(/[%\s]/g, "");
+        const roi = parseInt(roiRaw) || 0;
+        const salesRank = parseInt(col(row, "Sell: Sales Rank")) || 0;
+        const monthSales = parseInt(col(row, "Sell: Estimated Monthly Sales")) || 0;
+        const sellerCount = parseInt(col(row, "# Selling 'New'")) || parseInt(col(row, "Sell: Competitive Platform-Fulfilled Sellers")) || 5;
+        const amazonSells = col(row, "Sell: Official Store Sells and In Stock");
+        const amazonPresence = amazonSells && amazonSells.toLowerCase().includes("in stock") ? 80 : amazonSells && amazonSells.toLowerCase().includes("out") ? 5 : 15;
+
+        if (!asin || asin.length < 5 || !title || roi <= 0 || profit <= 0) return;
+
+        const p = {
+          id: Date.now() + idx,
+          asin, title, image: "🤖",
+          retailer: retailer || "TA",
+          cost, sellPrice, profit: parseFloat(profit.toFixed(2)), roi,
+          monthSales: monthSales || Math.max(5, Math.round(5000000 / (salesRank + 500))),
+          salesRank, sellerCount,
+          buyBoxStability: 75, amazonPresence,
+          trend: "stable", replenishable: false, ipRisk: false,
+          status: "pending", source: "Tactical Arbitrage", keepaLoaded: false,
+        };
+        const sg = computeScore(p);
+        products.push(Object.assign({}, p, sg));
+      });
+
+      setLoading(false);
+      if (products.length === 0) { setResult("No profitable products found. Try removing filters in TA before exporting."); return; }
+      onImport(products);
+      setResult("Imported " + products.length + " products from Tactical Arbitrage!");
+    };
+    reader.readAsText(file);
+  }
+
+  return (
+    <div style={{ background: "rgba(14,165,233,0.06)", border: "1px solid rgba(14,165,233,0.2)", borderRadius: 14, padding: 16, marginBottom: 12 }}>
+      <div style={{ fontSize: 12, color: "#0ea5e9", fontWeight: 700, marginBottom: 8, letterSpacing: 1 }}>🤖 TACTICAL ARBITRAGE IMPORT</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <label style={{ background: "rgba(14,165,233,0.15)", border: "1px solid rgba(14,165,233,0.35)", color: "#0ea5e9", borderRadius: 8, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+          {loading ? "Importing..." : "Choose TA CSV File"}
+          <input type="file" accept=".csv" onChange={handleFile} style={{ display: "none" }} />
+        </label>
+        <span style={{ fontSize: 11, color: "#444" }}>Export from TA results → Download</span>
+      </div>
+      {result && <div style={{ color: result.includes("No") ? "#f87171" : "#0ea5e9", fontSize: 11, marginTop: 8, fontWeight: 700 }}>{result}</div>}
+    </div>
+  );
+}
+
 function CSVImport({ onImport }) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState("");
@@ -453,6 +546,7 @@ export default function OADashboard() {
 
       <div style={{ padding: "0 16px" }}>
         <SummaryBar products={products} />
+        <TAImport onImport={handleImport} />
         <CSVImport onImport={handleImport} />
         <AsinLookup onAdd={handleAdd} />
 
