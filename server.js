@@ -185,7 +185,7 @@ async function fetchTAResults() {
 }
 
 // Run twice daily at 8am and 8pm
-cron.schedule("0 8,20 * * *", () => {
+cron.schedule("0 9,21 * * *", () => {
   fetchTAResults();
 });
 
