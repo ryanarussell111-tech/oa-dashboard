@@ -130,18 +130,32 @@ async function fetchTAResults() {
 
   try {
     // Step 1: Login to TA
-    const loginRes = await fetch("https://tacticalarbitrage.threecolts.com/users/sign_in", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user: { email: TA_EMAIL, password: TA_PASSWORD } }),
-      redirect: "follow",
-    });
+    // Step 1: Get login page and CSRF token
+const loginPage = await fetch("https://tacticalarbitrage.threecolts.com/users/sign_in");
+const loginHtml = await loginPage.text();
+const csrfMatch = loginHtml.match(/name="authenticity_token" value="([^"]+)"/);
+if (!csrfMatch) { console.error("Could not find CSRF token"); return; }
+const csrfToken = csrfMatch[1];
+const initialCookies = loginPage.headers.get("set-cookie") || "";
 
-    const cookies = loginRes.headers.get("set-cookie");
-    if (!cookies) {
-      console.error("Login failed — no cookies returned");
-      return;
-    }
+// Step 2: Submit login form
+const loginRes = await fetch("https://tacticalarbitrage.threecolts.com/users/sign_in", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/x-www-form-urlencoded",
+    "Cookie": initialCookies,
+  },
+  body: new URLSearchParams({
+    authenticity_token: csrfToken,
+    "user[email]": TA_EMAIL,
+    "user[password]": TA_PASSWORD,
+    commit: "Log in",
+  }).toString(),
+  redirect: "manual",
+});
+
+const cookies = loginRes.headers.get("set-cookie");
+if (!cookies) { console.error("Login failed — no cookies returned"); return; }
 
     // Step 2: Fetch latest search results
     const resultsRes = await fetch("https://tacticalarbitrage.threecolts.com/v2/results/product-finder.csv", {
