@@ -211,6 +211,8 @@ console.log("OA Intelligence auto-fetch service running — checks at 8am and 8p
 
 // Keep process alive
 const express = require("express");
+const path = require("path");
 const app = express();
-app.get("/", (req, res) => res.send("OA Intelligence Auto-Fetch Service Running"));
+app.use(express.static(path.join(__dirname, "build")));
+app.get("*", (req, res) => res.sendFile(path.join(__dirname, "build", "index.html")));
 app.listen(process.env.PORT || 4000, () => console.log("Health check server running"));
