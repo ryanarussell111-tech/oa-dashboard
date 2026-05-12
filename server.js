@@ -154,6 +154,7 @@ async function fetchTAResults() {
     }
 
     const csvText = await resultsRes.text();
+    console.log("CSV preview:", csvText.slice(0, 300));
     const products = parseTA(csvText);
     console.log(`Parsed ${products.length} products from TA`);
 
