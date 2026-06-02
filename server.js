@@ -197,5 +197,35 @@ console.log("OA Intelligence auto-fetch service running — checks at 8am and 8p
 // Keep process alive
 const express = require("express");
 const app = express();
+app.use(express.json());
 app.get("/", (req, res) => res.send("OA Intelligence Auto-Fetch Service Running"));
 app.listen(process.env.PORT || 4000, () => console.log("Health check server running"));
+// Keepa grading endpoint
+app.post("/api/grade-asins", async (req, res) => {
+  try {
+    const { asins } = req.body;
+    if (!asins || !Array.isArray(asins) || asins.length === 0) {
+      return res.status(400).json({ error: "No ASINs provided" });
+    }
+    const { getProductData, gradeProduct } = require("./keepa");
+    const chunks = [];
+    for (let i = 0; i < asins.length; i += 20) chunks.push(asins.slice(i, i + 20));
+    let allProducts = [];
+    for (const chunk of chunks) {
+      const products = await getProductData(chunk);
+      allProducts = allProducts.concat(products);
+    }
+    const graded = allProducts.map(p => ({
+      ...p,
+      ...gradeProduct(p.roi, p.profit, p.sellers, p.amzPct, p.bsr)
+    }));
+    const topPicks = graded.filter(p => (p.grade === "A+" || p.grade === "A") && p.roi >= 40);
+    for (const p of topPicks) {
+      await sendDiscordAlert(p);
+    }
+    res.json({ total: graded.length, topPicks: topPicks.length, products: graded });
+  } catch (err) {
+    console.error("Grade ASINs error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
