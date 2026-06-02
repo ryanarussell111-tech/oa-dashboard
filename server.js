@@ -198,7 +198,7 @@ console.log("OA Intelligence auto-fetch service running — checks at 8am and 8p
 const express = require("express");
 const app = express();
 app.use(express.json());
-app.get("/", (req, res) => res.send("OA Intelligence Auto-Fetch Service Running"));
+
 app.listen(process.env.PORT || 4000, () => console.log("Health check server running"));
 // Keepa grading endpoint
 app.post("/api/grade-asins", async (req, res) => {
