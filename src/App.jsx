@@ -1,42 +1,18 @@
 import { useState, useCallback } from "react";
 
-const KEEPA_KEY = "e13gv36pj9pijq8d84h045n5rv4r2d0rekm8lsjumnbl09ham7n3h6vionpc5efc";
-
-const DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1503406445725483160/AjIRSxPqr1Cr3iHhxO-3WytpTqo-4T-9ZjBXcKHIBo6Nda6TuVyukJIf8n9_OKtzv-zV";
-
+// Alerts are posted by the server, which holds the Discord webhook URL. The
+// server re-checks these qualifying rules; this is just to avoid a pointless
+// round trip for products that clearly don't qualify.
 async function sendDiscordAlert(product) {
   if (product.grade !== "A+" && product.grade !== "A") return;
   if (product.roi < 40) return;
   if (product.amazonPresence > 30) return;
 
-  const emoji = product.grade === "A+" ? "🟢" : "🔵";
-  const message = {
-    username: "OA Intelligence Bot",
-    embeds: [{
-      title: emoji + " " + product.grade + " LEAD — " + product.title,
-      color: product.grade === "A+" ? 0x00ff88 : 0x4ade80,
-      fields: [
-        { name: "ROI", value: product.roi + "%", inline: true },
-        { name: "Profit", value: "$" + product.profit.toFixed(2), inline: true },
-        { name: "Score", value: product.score + "/100", inline: true },
-        { name: "Sellers", value: String(product.sellerCount), inline: true },
-        { name: "BB Stability", value: product.buyBoxStability + "%", inline: true },
-        { name: "Amazon %", value: product.amazonPresence + "%", inline: true },
-        { name: "Retailer", value: product.retailer, inline: true },
-        { name: "Source", value: product.source, inline: true },
-        { name: "Cost", value: "$" + product.cost, inline: true },
-      ],
-      description: "[View on Amazon](https://www.amazon.com/dp/" + product.asin + ") | [Keepa](https://keepa.com/#!product/1-" + product.asin + ")",
-      footer: { text: "OA Intelligence Dashboard" },
-      timestamp: new Date().toISOString(),
-    }]
-  };
-
   try {
-    await fetch(DISCORD_WEBHOOK, {
+    await fetch("/api/alert", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(message),
+      body: JSON.stringify({ product }),
     });
   } catch (e) {
     console.error("Discord alert failed:", e);
@@ -98,34 +74,18 @@ function computeScore(p) {
   return { score, grade };
 }
 
+// Keepa is queried through the server, which holds the API key. The response
+// shape is unchanged from when this called Keepa's API directly.
 async function fetchKeepa(asin) {
   try {
-    const url = "https://api.keepa.com/product?key=" + KEEPA_KEY + "&domain=1&asin=" + asin + "&stats=180&offers=20";
-    const res = await fetch(url);
+    const res = await fetch("/api/keepa/lookup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ asin }),
+    });
+    if (!res.ok) return null;
     const data = await res.json();
-    if (!data.products || !data.products.length) return null;
-    const p = data.products[0];
-    const sellerCount = p.stats && p.stats.offerCountFBA ? p.stats.offerCountFBA : 0;
-    const amazonPresence = p.stats && p.stats.buyBoxPercentage
-      ? Math.round((p.stats.buyBoxPercentage[0] || 0) / 10) : 0;
-    const currentPrice = p.stats && p.stats.current && p.stats.current[18] > 0
-      ? p.stats.current[18] / 100
-      : p.stats && p.stats.current && p.stats.current[0] > 0
-      ? p.stats.current[0] / 100 : null;
-    const salesRank = p.stats && p.stats.current && p.stats.current[3]
-      ? p.stats.current[3] : p.salesRankCurrent || null;
-    const monthSales = salesRank ? Math.max(10, Math.round(5000000 / (salesRank + 500))) : 50;
-    const buyBoxStability = p.stats && p.stats.buyBoxPercentage
-      ? Math.min(99, Math.round(100 - (p.stats.buyBoxPercentage[0] || 50) / 10)) : 70;
-    const priceHistory = (p.csv && p.csv[18]) ? p.csv[18] : (p.csv && p.csv[0]) ? p.csv[0] : [];
-    let trend = "stable";
-    if (priceHistory.length >= 4) {
-      const recent = priceHistory[priceHistory.length - 1];
-      const older = priceHistory[priceHistory.length - 3];
-      if (recent > older * 1.05) trend = "up";
-      else if (recent < older * 0.95) trend = "down";
-    }
-    return { sellerCount, amazonPresence, currentPrice, salesRank, monthSales, buyBoxStability, trend, keepaTitle: p.title || null, keepaLoaded: true };
+    return data && data.product ? data.product : null;
   } catch (e) { return null; }
 }
 

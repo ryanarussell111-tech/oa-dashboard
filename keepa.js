@@ -81,4 +81,45 @@ function gradeProduct(roi, profit, sellers, amzPct, bsr) {
   return { grade: 'F', score };
 }
 
-module.exports = { getProductData, gradeProduct };
+// Dashboard-shaped lookup for a single ASIN. The API key is read from the
+// environment here on the server, so it is never shipped to the browser.
+async function lookupForDashboard(asin) {
+  const key = process.env.KEEPA_API_KEY;
+  if (!key) throw new Error('KEEPA_API_KEY is not set');
+
+  const url = `${KEEPA_API}?key=${key}&domain=1&asin=${encodeURIComponent(asin)}&stats=180&offers=20`;
+  const res = await fetch(url);
+  const data = await res.json();
+  if (!data.products || !data.products.length) return null;
+
+  const p = data.products[0];
+  const stats = p.stats || {};
+  const current = stats.current || [];
+
+  const sellerCount = stats.offerCountFBA || 0;
+  const amazonPresence = stats.buyBoxPercentage
+    ? Math.round((stats.buyBoxPercentage[0] || 0) / 10) : 0;
+  const currentPrice = current[18] > 0 ? current[18] / 100
+    : current[0] > 0 ? current[0] / 100 : null;
+  const salesRank = current[3] ? current[3] : p.salesRankCurrent || null;
+  const monthSales = salesRank ? Math.max(10, Math.round(5000000 / (salesRank + 500))) : 50;
+  const buyBoxStability = stats.buyBoxPercentage
+    ? Math.min(99, Math.round(100 - (stats.buyBoxPercentage[0] || 50) / 10)) : 70;
+
+  const priceHistory = (p.csv && p.csv[18]) ? p.csv[18] : (p.csv && p.csv[0]) ? p.csv[0] : [];
+  let trend = 'stable';
+  if (priceHistory.length >= 4) {
+    const recent = priceHistory[priceHistory.length - 1];
+    const older = priceHistory[priceHistory.length - 3];
+    if (recent > older * 1.05) trend = 'up';
+    else if (recent < older * 0.95) trend = 'down';
+  }
+
+  return {
+    sellerCount, amazonPresence, currentPrice, salesRank,
+    monthSales, buyBoxStability, trend,
+    keepaTitle: p.title || null, keepaLoaded: true,
+  };
+}
+
+module.exports = { getProductData, gradeProduct, lookupForDashboard };

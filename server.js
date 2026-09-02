@@ -1,9 +1,31 @@
+require("dotenv").config();
+
 const cron = require("node-cron");
 const fetch = require("node-fetch");
 
-const DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1503406445725483160/AjIRSxPqr1Cr3iHhxO-3WytpTqo-4T-9ZjBXcKHIBo6Nda6TuVyukJIf8n9_OKtzv-zV";
+const DISCORD_WEBHOOK = process.env.DISCORD_WEBHOOK;
 const TA_EMAIL = process.env.TA_EMAIL;
 const TA_PASSWORD = process.env.TA_PASSWORD;
+
+// Single guarded exit point for Discord. Everything that posts goes through
+// here so a missing webhook degrades to a warning instead of a crash.
+async function postToDiscord(payload) {
+  if (!DISCORD_WEBHOOK) {
+    console.warn("DISCORD_WEBHOOK not set — skipping Discord post");
+    return false;
+  }
+  try {
+    await fetch(DISCORD_WEBHOOK, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return true;
+  } catch (e) {
+    console.error("Discord post failed:", e.message);
+    return false;
+  }
+}
 
 // Scoring engine (matches your dashboard)
 function computeScore(p) {
@@ -33,37 +55,47 @@ function computeScore(p) {
   return { score, grade };
 }
 
-// Send Discord alert for qualifying products
-async function sendDiscordAlert(product) {
+// Send Discord alert for qualifying products. Fields are built defensively
+// because this also serves requests coming from the browser.
+async function sendDiscordAlert(product, footerText) {
+  const num = (v, digits) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? (digits === undefined ? String(n) : n.toFixed(digits)) : "—";
+  };
+
+  const fields = [
+    { name: "ROI", value: `${num(product.roi)}%`, inline: true },
+    { name: "Profit", value: `$${num(product.profit, 2)}`, inline: true },
+    { name: "Score", value: `${num(product.score)}/100`, inline: true },
+    { name: "Sellers", value: num(product.sellerCount), inline: true },
+  ];
+  if (product.buyBoxStability !== undefined) {
+    fields.push({ name: "BB Stability", value: `${num(product.buyBoxStability)}%`, inline: true });
+  }
+  if (product.amazonPresence !== undefined) {
+    fields.push({ name: "Amazon %", value: `${num(product.amazonPresence)}%`, inline: true });
+  }
+  fields.push({ name: "Retailer", value: String(product.retailer || "—"), inline: true });
+  if (product.source) {
+    fields.push({ name: "Source", value: String(product.source), inline: true });
+  }
+  fields.push({ name: "Cost", value: `$${num(product.cost, 2)}`, inline: true });
+
   const emoji = product.grade === "A+" ? "🟢" : "🔵";
-  const message = {
+  const asin = encodeURIComponent(product.asin || "");
+  const sent = await postToDiscord({
     username: "OA Intelligence Bot",
     embeds: [{
       title: `${emoji} ${product.grade} LEAD — ${product.title}`,
       color: product.grade === "A+" ? 0x00ff88 : 0x4ade80,
-      fields: [
-        { name: "ROI", value: `${product.roi}%`, inline: true },
-        { name: "Profit", value: `$${product.profit.toFixed(2)}`, inline: true },
-        { name: "Score", value: `${product.score}/100`, inline: true },
-        { name: "Sellers", value: String(product.sellerCount), inline: true },
-        { name: "Retailer", value: product.retailer, inline: true },
-        { name: "Cost", value: `$${product.cost}`, inline: true },
-      ],
-      description: `[View on Amazon](https://www.amazon.com/dp/${product.asin}) | [Keepa](https://keepa.com/#!product/1-${product.asin})`,
-      footer: { text: "OA Intelligence — Auto Scan" },
+      fields,
+      description: `[View on Amazon](https://www.amazon.com/dp/${asin}) | [Keepa](https://keepa.com/#!product/1-${asin})`,
+      footer: { text: footerText || "OA Intelligence — Auto Scan" },
       timestamp: new Date().toISOString(),
     }]
-  };
-  try {
-    await fetch(DISCORD_WEBHOOK, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(message),
-    });
-    console.log(`Alert sent: ${product.title}`);
-  } catch (e) {
-    console.error("Discord alert failed:", e.message);
-  }
+  });
+  if (sent) console.log(`Alert sent: ${product.title}`);
+  return sent;
 }
 
 // Parse TA CSV text into products
@@ -169,13 +201,9 @@ async function fetchTAResults() {
 
     // Send summary
     if (qualified.length > 0) {
-      await fetch(DISCORD_WEBHOOK, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username: "OA Intelligence Bot",
-          content: `📊 **Scan complete** — Found **${qualified.length}** qualifying leads from ${products.length} total products. ${new Date().toLocaleString()}`,
-        }),
+      await postToDiscord({
+        username: "OA Intelligence Bot",
+        content: `📊 **Scan complete** — Found **${qualified.length}** qualifying leads from ${products.length} total products. ${new Date().toLocaleString()}`,
       });
     }
 
@@ -227,6 +255,49 @@ app.post("/api/grade-asins", async (req, res) => {
   } catch (err) {
     console.error("Grade ASINs error:", err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Keepa lookup proxy. The browser calls this instead of api.keepa.com so the
+// API key stays server-side.
+app.post("/api/keepa/lookup", async (req, res) => {
+  try {
+    const { asin } = req.body || {};
+    if (typeof asin !== "string" || !/^[A-Za-z0-9]{8,14}$/.test(asin.trim())) {
+      return res.status(400).json({ error: "A valid ASIN is required" });
+    }
+    if (!process.env.KEEPA_API_KEY) {
+      return res.status(503).json({ error: "Keepa lookup is not configured on the server" });
+    }
+    const { lookupForDashboard } = require("./keepa");
+    const product = await lookupForDashboard(asin.trim().toUpperCase());
+    if (!product) return res.status(404).json({ error: "No Keepa data for that ASIN" });
+    res.json({ product });
+  } catch (err) {
+    console.error("Keepa lookup error:", err.message);
+    res.status(500).json({ error: "Keepa lookup failed" });
+  }
+});
+
+// Discord alert proxy. The webhook URL stays server-side, and the qualifying
+// filter is re-applied here rather than trusted from the caller.
+app.post("/api/alert", async (req, res) => {
+  try {
+    const { product } = req.body || {};
+    if (!product || typeof product !== "object" || !product.asin || !product.title) {
+      return res.status(400).json({ error: "A product with asin and title is required" });
+    }
+    const qualifies =
+      (product.grade === "A+" || product.grade === "A") &&
+      Number(product.roi) >= 40 &&
+      Number(product.amazonPresence) <= 30;
+    if (!qualifies) return res.json({ sent: false, reason: "does not qualify" });
+
+    const sent = await sendDiscordAlert(product, "OA Intelligence Dashboard");
+    res.json({ sent });
+  } catch (err) {
+    console.error("Alert error:", err.message);
+    res.status(500).json({ error: "Alert failed" });
   }
 });
 
