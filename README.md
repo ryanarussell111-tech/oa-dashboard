@@ -1,70 +1,67 @@
-# Getting Started with Create React App
+# OA Intelligence Dashboard
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Online-arbitrage sourcing dashboard: imports Tactical Arbitrage and SellerAmp
+results, grades leads against Keepa data, and pushes qualifying finds to Discord.
 
-## Available Scripts
+## Configuration
 
-In the project directory, you can run:
+All credentials live in the environment and are read **server-side only**.
+Copy `.env.example` to `.env` and fill it in:
 
-### `npm start`
+```bash
+cp .env.example .env
+```
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+| Variable | Used by | Purpose |
+| --- | --- | --- |
+| `KEEPA_API_KEY` | `keepa.js` | Keepa product API lookups |
+| `DISCORD_WEBHOOK` | `server.js` | Lead alerts and scan summaries |
+| `TA_EMAIL` / `TA_PASSWORD` | `server.js` | Twice-daily Tactical Arbitrage auto-scan |
+| `PORT` | `server.js` | API server port (default 4000) |
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+`.env` is gitignored. Never commit it.
 
-### `npm test`
+> **Do not add a `REACT_APP_` prefix to any of these.** Create React App inlines
+> every `REACT_APP_*` variable into the JavaScript bundle at build time, which
+> would publish the value to anyone who opens the site. Secrets must stay on the
+> server and be reached through the API endpoints below.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## Running
 
-### `npm run build`
+The browser app and the API server run as two processes in development:
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+```bash
+node server.js    # API + auto-scan on :4000
+npm start         # React dev server on :3000, proxied to :4000
+```
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+In production `server.js` serves the built frontend, so one process covers both:
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+```bash
+npm run build
+node server.js
+```
 
-### `npm run eject`
+## API
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+The frontend never talks to third-party APIs directly — it calls these, and the
+server attaches the credentials.
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/keepa/lookup` | `{ asin }` → dashboard-shaped Keepa data for one ASIN |
+| `POST /api/alert` | `{ product }` → posts a lead alert to Discord if it qualifies |
+| `POST /api/grade-asins` | `{ asins: [...] }` → bulk grade a list of ASINs |
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+`/api/alert` re-applies the qualifying rules (grade A/A+, ROI ≥ 40%, Amazon
+presence ≤ 30%) server-side rather than trusting the caller.
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+## Tests
 
-## Learn More
+```bash
+npm test
+```
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+Alongside the render test, the suite scans `src/` and fails if a Discord webhook
+URL, a direct Keepa API call, or a long key-like literal is reintroduced into
+client code.
